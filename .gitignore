@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-build/
+build/
+dist/
+*.spec.bak
+.env
+data/
+*.csv
+data/browser_profile/
+data/kr36.db
+.DS_Store
+.idea/
+.vscode/
