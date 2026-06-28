@@ -7,8 +7,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from kr36.core.paths import configure_playwright_browsers, default_qcc_storage_state_path
 from kr36.sources.events.qcc.cookie_store import resolve_cookie_header
-
 from kr36.sources.events.qcc.constants import (
     DEFAULT_PAGE_SIZE,
     EVENT_API_PATHS,
@@ -16,12 +16,11 @@ from kr36.sources.events.qcc.constants import (
     EVENT_TYPES,
     QCC_ORIGIN,
 )
-
 from kr36.sources.infra.iyiou.constants import STEALTH_USER_AGENT
 
 
 class QccClient:
-    """企查查创投事件 HTTP 客户端；Cookie 失效时自动触发浏览器登录。"""
+    """企查查创投事件 HTTP 客户端；优先 Playwright 会话，Cookie 失效时自动登录。"""
 
     def __init__(
         self,
@@ -30,7 +29,6 @@ class QccClient:
         delay_max: float = 1.5,
         timeout: float = 30.0,
     ) -> None:
-        """初始化企查查 HTTP 客户端。"""
         self.delay_min = delay_min
         self.delay_max = delay_max
         self.timeout = timeout
@@ -47,7 +45,6 @@ class QccClient:
         cookie_header: str | None = None,
         allow_relogin: bool = True,
     ) -> dict[str, Any]:
-        """拉取指定类型的单页创投事件。"""
         if event_type not in EVENT_TYPES:
             raise ValueError(f"未知企查查事件类型: {event_type}")
 
@@ -85,15 +82,41 @@ class QccClient:
         allow_relogin: bool = True,
         _retried: bool = False,
     ) -> dict[str, Any]:
-        """向企查查 API 发送 POST 请求并解析 JSON 响应。"""
+        storage = default_qcc_storage_state_path()
+        if storage.is_file() and cookie_header is None:
+            try:
+                return self._parse_api_response(
+                    self._post_playwright(path, body, referer=referer),
+                    allow_relogin=allow_relogin,
+                    _retried=_retried,
+                    path=path,
+                    body=body,
+                    referer=referer,
+                )
+            except RuntimeError:
+                if not allow_relogin or _retried:
+                    raise
+
+        return self._parse_api_response(
+            self._post_urllib(path, body, referer=referer, cookie_header=cookie_header),
+            allow_relogin=allow_relogin,
+            _retried=_retried,
+            path=path,
+            body=body,
+            referer=referer,
+            cookie_header=cookie_header,
+        )
+
+    def _post_urllib(
+        self,
+        path: str,
+        body: dict[str, Any],
+        *,
+        referer: str,
+        cookie_header: str | None,
+    ) -> tuple[str, int | None, dict[str, Any]]:
         payload = json.dumps(body).encode("utf-8")
-        headers = {
-            "User-Agent": STEALTH_USER_AGENT,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Origin": QCC_ORIGIN,
-            "Referer": referer,
-        }
+        headers = _request_headers(referer)
         cookie = (cookie_header or resolve_cookie_header()).strip()
         if cookie:
             headers["Cookie"] = cookie
@@ -113,10 +136,59 @@ class QccClient:
         except urllib.error.HTTPError as exc:
             http_code = exc.code
             raw = exc.read().decode("utf-8", errors="replace")
-            if not _looks_like_auth_failure(raw=raw, http_code=http_code):
-                raise RuntimeError(f"企查查 HTTP {exc.code}: {raw[:500]}") from exc
+        return raw, http_code, {}
 
-        data: dict[str, Any] = {}
+    def _post_playwright(self, path: str, body: dict[str, Any], *, referer: str) -> str:
+        from playwright.sync_api import sync_playwright
+
+        storage = default_qcc_storage_state_path()
+        if not storage.is_file():
+            raise RuntimeError("企查查 storage_state 不存在，需先登录")
+
+        configure_playwright_browsers()
+        url = f"{QCC_ORIGIN}{path}"
+        self._sleep()
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                context = browser.new_context(
+                    storage_state=str(storage.resolve()),
+                    user_agent=STEALTH_USER_AGENT,
+                    locale="zh-CN",
+                )
+                response = context.request.post(
+                    url,
+                    data=json.dumps(body),
+                    headers=_request_headers(referer),
+                    timeout=self.timeout * 1000,
+                )
+                if response.status >= 400:
+                    raise RuntimeError(f"企查查 HTTP {response.status}: {response.text()[:500]}")
+                return response.text()
+            finally:
+                browser.close()
+
+    def _parse_api_response(
+        self,
+        payload: tuple[str, int | None, dict[str, Any]] | str,
+        *,
+        allow_relogin: bool,
+        _retried: bool,
+        path: str,
+        body: dict[str, Any],
+        referer: str,
+        cookie_header: str | None = None,
+    ) -> dict[str, Any]:
+        if isinstance(payload, str):
+            raw = payload
+            http_code = None
+            data: dict[str, Any] = {}
+        else:
+            raw, http_code, data = payload
+            if http_code and not _looks_like_auth_failure(raw=raw, http_code=http_code):
+                raise RuntimeError(f"企查查 HTTP {http_code}: {raw[:500]}")
+
         if raw:
             try:
                 parsed = json.loads(raw)
@@ -125,27 +197,24 @@ class QccClient:
             except json.JSONDecodeError:
                 if not _looks_like_auth_failure(raw=raw, http_code=http_code):
                     raise RuntimeError(f"企查查响应非 JSON: {raw[:200]}")
-                if not allow_relogin or _retried:
-                    raise RuntimeError("企查查 API 返回非 JSON，可能未登录或触发风控")
                 return self._retry_after_login(
-                    path, body, referer=referer, cookie_header=cookie_header, _retried=_retried
+                    path, body, referer=referer, cookie_header=cookie_header, _retried=_retried,
+                    allow_relogin=allow_relogin,
                 )
 
         if _looks_like_auth_failure(raw=raw, http_code=http_code, data=data):
-            if not allow_relogin or _retried:
-                raise RuntimeError("企查查 API 需要登录或 Cookie 已失效")
             return self._retry_after_login(
-                path, body, referer=referer, cookie_header=cookie_header, _retried=_retried
+                path, body, referer=referer, cookie_header=cookie_header, _retried=_retried,
+                allow_relogin=allow_relogin,
             )
 
         status = data.get("Status")
         if status not in (200, "200", None):
             message = str(data.get("Message") or data.get("msg") or raw[:200])
             if _looks_like_auth_failure(raw=raw, data=data, message=message):
-                if not allow_relogin or _retried:
-                    raise RuntimeError(f"企查查 API 错误 Status={status}: {message}")
                 return self._retry_after_login(
-                    path, body, referer=referer, cookie_header=cookie_header, _retried=_retried
+                    path, body, referer=referer, cookie_header=cookie_header, _retried=_retried,
+                    allow_relogin=allow_relogin,
                 )
             raise RuntimeError(f"企查查 API 错误 Status={status}: {message}")
         return data
@@ -158,20 +227,31 @@ class QccClient:
         referer: str,
         cookie_header: str | None,
         _retried: bool,
+        allow_relogin: bool,
     ) -> dict[str, Any]:
-        if _retried:
-            raise RuntimeError("企查查登录后仍无法访问 API，请稍后重试")
+        if not allow_relogin or _retried:
+            raise RuntimeError("企查查 API 返回非 JSON，可能未登录或触发风控")
         from kr36.sources.events.qcc.auth import ensure_qcc_login
 
         if not ensure_qcc_login():
             raise RuntimeError("企查查需要登录，浏览器扫码未完成")
-        return self._post(path, body, referer=referer, _retried=True)
+        return self._post(path, body, referer=referer, _retried=True, allow_relogin=allow_relogin)
 
     def _sleep(self) -> None:
-        """请求前随机休眠，避免频率限制。"""
         if self.delay_max <= 0:
             return
         time.sleep(random.uniform(self.delay_min, self.delay_max))
+
+
+def _request_headers(referer: str) -> dict[str, str]:
+    return {
+        "User-Agent": STEALTH_USER_AGENT,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Origin": QCC_ORIGIN,
+        "Referer": referer,
+    }
 
 
 def _looks_like_auth_failure(
@@ -181,7 +261,6 @@ def _looks_like_auth_failure(
     data: dict[str, Any] | None = None,
     message: str = "",
 ) -> bool:
-    """判断响应是否因未登录 / Cookie 失效导致。"""
     if http_code in (401, 403):
         return True
     if raw.lstrip().startswith("<"):

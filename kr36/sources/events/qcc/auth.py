@@ -26,10 +26,10 @@ def load_saved_cookie_header() -> str:
     return resolve_cookie_header()
 
 
-def _api_probe_ok(cookie_header: str | None = None) -> bool:
-    """用 Cookie 探测创投 API 是否返回 JSON。"""
-    header = (cookie_header or load_saved_cookie_header()).strip()
-    if not header:
+def _api_probe_ok() -> bool:
+    """探测创投 API 是否可用（与正式拉取相同：优先 Playwright + storage_state）。"""
+    storage = default_qcc_storage_state_path()
+    if not storage.is_file() and not load_saved_cookie_header().strip():
         return False
     try:
         from kr36.sources.events.qcc.client import QccClient
@@ -39,7 +39,6 @@ def _api_probe_ok(cookie_header: str | None = None) -> bool:
             EVENT_MAINLAND_FINANCING,
             page_index=1,
             page_size=1,
-            cookie_header=header,
             allow_relogin=False,
         )
         return True
@@ -97,7 +96,7 @@ def _interactive_qcc_login(
             title = page.title()
             if not _is_login_page(url, title):
                 cookie_header = persist_qcc_session(context, storage_path=storage_path)
-                if cookie_header and _api_probe_ok(cookie_header):
+                if cookie_header and _api_probe_ok():
                     logged_in = True
                     break
             page.wait_for_timeout(2000)
@@ -105,7 +104,7 @@ def _interactive_qcc_login(
         if not logged_in:
             cookie_header = persist_qcc_session(context, storage_path=storage_path)
             if cookie_header:
-                logged_in = _api_probe_ok(cookie_header)
+                logged_in = _api_probe_ok()
 
         context.close()
 
@@ -157,7 +156,7 @@ def run_setup_qcc(
 def verify_saved_cookie() -> dict[str, object]:
     """检查已保存 Cookie 是否有效。"""
     cookie_header = load_saved_cookie_header()
-    ok = _api_probe_ok(cookie_header) if cookie_header else False
+    ok = _api_probe_ok() if cookie_header else False
     return {
         "valid": ok,
         "storage_state": str(default_qcc_storage_state_path()),
