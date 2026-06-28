@@ -49,6 +49,59 @@ def bundled_browsers_dir() -> Path:
     return app_dir() / "browsers"
 
 
+def tools_dir() -> Path:
+    """打包版内置工具目录（便携 Node.js + lark-cli）。"""
+    return app_dir() / "tools"
+
+
+def bundled_node_dir() -> Path:
+    """便携 Node.js 目录（tools/node）。"""
+    return tools_dir() / "node"
+
+
+def bundled_npm_prefix() -> Path:
+    """npm 全局前缀（tools/npm，含 lark-cli）。"""
+    return tools_dir() / "npm"
+
+
+def bundled_node_exe() -> Path | None:
+    """便携 node.exe，不存在则返回 None。"""
+    path = bundled_node_dir() / "node.exe"
+    return path if path.is_file() else None
+
+
+def bundled_npm_cmd() -> Path | None:
+    """便携 npm.cmd，不存在则返回 None。"""
+    path = bundled_node_dir() / "npm.cmd"
+    return path if path.is_file() else None
+
+
+def bundled_lark_cli() -> Path | None:
+    """内置 lark-cli 可执行文件，不存在则返回 None。"""
+    candidates = [
+        tools_dir() / "lark-cli" / "lark-cli.exe",
+        bundled_npm_prefix() / "lark-cli.cmd",
+        bundled_npm_prefix() / "node_modules" / ".bin" / "lark-cli.cmd",
+        bundled_npm_prefix() / "lark-cli",
+        bundled_npm_prefix() / "node_modules" / ".bin" / "lark-cli",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def default_lark_cli_bin() -> str:
+    """默认 lark-cli 路径：环境变量 > 内置 tools > 系统 PATH 中的 lark-cli。"""
+    env = os.getenv("LARK_CLI_BIN", "").strip()
+    if env:
+        return env
+    bundled = bundled_lark_cli()
+    if bundled:
+        return str(bundled)
+    return "lark-cli"
+
+
 def configure_playwright_browsers() -> None:
     """若存在内置 browsers 目录，则指向 Playwright 使用内置 Chromium。"""
     browsers = bundled_browsers_dir()

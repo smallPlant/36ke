@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from kr36.core.paths import default_data_dir, default_db_path
+from kr36.core.paths import default_data_dir, default_db_path, default_lark_cli_bin
 
 # 华南地区省级行政区（民政部标准名称，cpca 解析结果）
 SOUTH_CHINA_PROVINCES: frozenset[str] = frozenset({
@@ -66,6 +66,6 @@ class Settings:
     # 飞书用户 open_id（可用 FEISHU_USER_ID 覆盖）
     feishu_user_id: str = field(default_factory=lambda: os.getenv("FEISHU_USER_ID", ""))
     # lark-cli 可执行文件路径（可用 LARK_CLI_BIN 覆盖）
-    lark_cli_bin: str = field(default_factory=lambda: os.getenv("LARK_CLI_BIN", "lark-cli"))
+    lark_cli_bin: str = field(default_factory=default_lark_cli_bin)
     # 是否推送飞书（可用 KR36_PUSH_FEISHU 覆盖）
     push_feishu: bool = field(default_factory=default_push_feishu)

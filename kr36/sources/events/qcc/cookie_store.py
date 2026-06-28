@@ -12,10 +12,14 @@ QCC_COOKIE_ENV = "QCC_COOKIE"
 
 
 def resolve_cookie_header() -> str:
-    """按优先级读取 Cookie：环境变量 > cookie.txt > storage_state.json。"""
+    """按优先级读取 Cookie：环境变量 > storage_state.json > cookie.txt。"""
     env = os.getenv(QCC_COOKIE_ENV, "").strip()
     if env:
         return env
+
+    storage_cookie = cookie_header_from_storage_state(default_qcc_storage_state_path())
+    if storage_cookie:
+        return storage_cookie
 
     cookie_path = default_qcc_cookie_path()
     if cookie_path.is_file():
@@ -23,7 +27,7 @@ def resolve_cookie_header() -> str:
         if text:
             return text
 
-    return cookie_header_from_storage_state(default_qcc_storage_state_path())
+    return ""
 
 
 def cookie_header_from_storage_state(path: Path) -> str:
@@ -41,7 +45,7 @@ def cookie_header_from_storage_state(path: Path) -> str:
         if not isinstance(item, dict):
             continue
         domain = str(item.get("domain") or "")
-        if "qcc.com" not in domain:
+        if "qcc.com" not in domain.lower():
             continue
         name = str(item.get("name") or "")
         if not name or name in seen:
@@ -65,3 +69,14 @@ def save_storage_state_copy(source: Path, *, dest: Path | None = None) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     return target
+
+
+def persist_qcc_session(context, *, storage_path: Path | None = None) -> str:
+    """从 Playwright 上下文导出 storage_state 并同步 cookie.txt。"""
+    target = storage_path or default_qcc_storage_state_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    context.storage_state(path=str(target))
+    cookie_header = cookie_header_from_storage_state(target)
+    if cookie_header:
+        save_cookie_header(cookie_header)
+    return cookie_header

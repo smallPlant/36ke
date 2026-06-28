@@ -1,4 +1,4 @@
-"""企查查登录：Playwright 打开浏览器，等待扫码/登录后保存 Cookie。"""
+"""企查查登录：Cookie 失效或缺失时自动打开浏览器扫码登录并保存。"""
 
 from __future__ import annotations
 
@@ -13,50 +13,56 @@ from kr36.core.paths import (
 )
 from kr36.sources.infra.iyiou.constants import STEALTH_INIT_SCRIPT, STEALTH_USER_AGENT
 from kr36.sources.events.qcc.constants import EVENT_REFERERS, EVENT_MAINLAND_FINANCING, QCC_ORIGIN
-from kr36.sources.events.qcc.cookie_store import cookie_header_from_storage_state, save_cookie_header
+from kr36.sources.events.qcc.cookie_store import persist_qcc_session
 
 LOGIN_WAIT_URL = EVENT_REFERERS[EVENT_MAINLAND_FINANCING]
-PROBE_API = f"{QCC_ORIGIN}/api/investOrg/getMainlandFinancingList"
 DEFAULT_TIMEOUT_SEC = 300
 
 
-def _api_probe_ok(cookie_header: str) -> bool:
+def load_saved_cookie_header() -> str:
+    """读取已保存的 Cookie（storage_state 或 cookie.txt）。"""
+    from kr36.sources.events.qcc.cookie_store import resolve_cookie_header
+
+    return resolve_cookie_header()
+
+
+def _api_probe_ok(cookie_header: str | None = None) -> bool:
     """用 Cookie 探测创投 API 是否返回 JSON。"""
-    if not cookie_header:
+    header = (cookie_header or load_saved_cookie_header()).strip()
+    if not header:
         return False
     try:
         from kr36.sources.events.qcc.client import QccClient
 
         client = QccClient(delay_min=0, delay_max=0)
-        client.fetch_event_page(EVENT_MAINLAND_FINANCING, page_index=1, page_size=1)
+        client.fetch_event_page(
+            EVENT_MAINLAND_FINANCING,
+            page_index=1,
+            page_size=1,
+            cookie_header=header,
+            allow_relogin=False,
+        )
         return True
     except RuntimeError:
         return False
 
 
-def _cookie_header_from_context(context) -> str:
-    cookies = context.cookies("https://www.qcc.com")
-    parts = [f"{item['name']}={item['value']}" for item in cookies if item.get("name")]
-    return "; ".join(parts)
+def is_qcc_authenticated() -> bool:
+    """当前 Cookie 是否存在且可用。"""
+    return _api_probe_ok()
 
 
 def _is_login_page(url: str, title: str) -> bool:
     return "weblogin" in url or "会员登录" in title
 
 
-def run_setup_qcc(
+def _interactive_qcc_login(
     *,
     headless: bool = False,
     timeout_sec: int = DEFAULT_TIMEOUT_SEC,
     profile_dir: Path | None = None,
 ) -> bool:
-    """
-    打开企查查创投页，等待用户扫码/登录，成功后保存 Cookie。
-
-    - 持久化浏览器目录：data/qcc/profile（下次可复用登录态）
-    - storage_state：data/qcc/storage_state.json
-    - Cookie 字符串：data/qcc/cookie.txt
-    """
+    """打开浏览器等待用户扫码/登录，成功后写入 Cookie。"""
     from playwright.sync_api import sync_playwright
 
     profile = profile_dir or default_qcc_profile_dir()
@@ -66,12 +72,7 @@ def run_setup_qcc(
 
     configure_playwright_browsers()
 
-    existing = cookie_header_from_storage_state(storage_path)
-    if existing and _api_probe_ok(existing):
-        print(f"✓ 已有有效企查查 Cookie（{storage_path}）")
-        return True
-
-    print("即将打开浏览器，请使用企查查 App 扫码或账号登录（仅需一次）...")
+    print("企查查 Cookie 无效或缺失，即将打开浏览器请扫码/登录...")
     print(f"登录成功后 Cookie 将保存到：\n  - {storage_path}\n  - {default_qcc_cookie_path()}")
 
     with sync_playwright() as playwright:
@@ -95,46 +96,71 @@ def run_setup_qcc(
             url = page.url
             title = page.title()
             if not _is_login_page(url, title):
-                cookie_header = _cookie_header_from_context(context)
-                if cookie_header:
-                    context.storage_state(path=str(storage_path))
-                    save_cookie_header(cookie_header)
-                    if _api_probe_ok(cookie_header):
-                        logged_in = True
-                        break
+                cookie_header = persist_qcc_session(context, storage_path=storage_path)
+                if cookie_header and _api_probe_ok(cookie_header):
+                    logged_in = True
+                    break
             page.wait_for_timeout(2000)
 
         if not logged_in:
-            # 最后再试一次 storage_state（有时页面标题滞后）
-            context.storage_state(path=str(storage_path))
-            cookie_header = cookie_header_from_storage_state(storage_path) or _cookie_header_from_context(context)
+            cookie_header = persist_qcc_session(context, storage_path=storage_path)
             if cookie_header:
-                save_cookie_header(cookie_header)
                 logged_in = _api_probe_ok(cookie_header)
 
         context.close()
 
     if logged_in:
-        print("✓ 企查查登录成功，Cookie 已保存。之后可直接运行：")
-        print("  python main.py --source qcc --pages 1 --no-push-feishu")
+        print("[OK] 企查查登录成功，Cookie 已保存")
         return True
 
-    print("✗ 登录超时或 API 仍不可用。请重试：python main.py setup-qcc")
+    print("[失败] 登录超时或 API 仍不可用，请重试")
     return False
+
+
+def ensure_qcc_login(
+    *,
+    force: bool = False,
+    headless: bool = False,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    profile_dir: Path | None = None,
+) -> bool:
+    """确保企查查已登录；Cookie 有效则跳过，否则触发浏览器扫码登录。"""
+    if is_qcc_authenticated():
+        return True
+    if force and load_saved_cookie_header():
+        print("企查查 Cookie 已失效，需重新登录...")
+    return _interactive_qcc_login(
+        headless=headless,
+        timeout_sec=timeout_sec,
+        profile_dir=profile_dir,
+    )
+
+
+def run_setup_qcc(
+    *,
+    headless: bool = False,
+    timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+    profile_dir: Path | None = None,
+) -> bool:
+    """CLI 入口：检查 Cookie，无效则引导登录。"""
+    if is_qcc_authenticated():
+        print(f"[OK] 已有有效企查查 Cookie（{default_qcc_storage_state_path()}）")
+        return True
+    return ensure_qcc_login(
+        force=True,
+        headless=headless,
+        timeout_sec=timeout_sec,
+        profile_dir=profile_dir,
+    )
 
 
 def verify_saved_cookie() -> dict[str, object]:
     """检查已保存 Cookie 是否有效。"""
-    storage_path = default_qcc_storage_state_path()
-    cookie_header = cookie_header_from_storage_state(storage_path)
-    if not cookie_header:
-        cookie_path = default_qcc_cookie_path()
-        if cookie_path.is_file():
-            cookie_header = cookie_path.read_text(encoding="utf-8").strip()
+    cookie_header = load_saved_cookie_header()
     ok = _api_probe_ok(cookie_header) if cookie_header else False
     return {
         "valid": ok,
-        "storage_state": str(storage_path),
+        "storage_state": str(default_qcc_storage_state_path()),
         "cookie_file": str(default_qcc_cookie_path()),
         "has_cookie": bool(cookie_header),
     }

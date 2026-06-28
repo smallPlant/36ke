@@ -23,7 +23,9 @@ class FeishuNotifier:
 
     @property
     def enabled(self) -> bool:
-        """检查 lark-cli 是否在 PATH 中可用。"""
+        """检查 lark-cli 是否可用（绝对路径或 PATH）。"""
+        if Path(self.cli_bin).is_file():
+            return True
         return bool(shutil.which(self.cli_bin))
 
     def _run_cli(

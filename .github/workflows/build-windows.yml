@@ -25,7 +25,7 @@ jobs:
       - name: PyInstaller build
         run: pyinstaller packaging/36ke-full.spec --noconfirm --distpath dist --workpath build
 
-      - name: Bundle Chromium and launchers
+      - name: Bundle Chromium, tools and launchers
         shell: pwsh
         run: |
           $dist = "dist/36Ke"
@@ -37,16 +37,17 @@ jobs:
           if (-not (Get-ChildItem "$dist/browsers" -ErrorAction SilentlyContinue)) {
             throw "Chromium not found under $src"
           }
+          pwsh -File packaging/bundle_tools.ps1 -Dest "$dist/tools"
           Copy-Item packaging/launcher/* $dist -Force
 
       - name: Create zip
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/36Ke -DestinationPath dist/36Ke-完整版-win64.zip -Force
+          Compress-Archive -Path dist/36Ke -DestinationPath dist/36Ke-全功能版-win64.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: 36Ke-win64
-          path: dist/36Ke-完整版-win64.zip
+          path: dist/36Ke-全功能版-win64.zip
           retention-days: 30

@@ -57,7 +57,7 @@ python main.py schedule --dry-run          # 查看下次执行时间
 
 ## Windows 完整版（用户无需 Python）
 
-**最终用户**：解压 `36Ke-完整版-win64.zip`，双击 `启动-最近3天.bat` 即可。
+**最终用户**：解压 `36Ke-全功能版-win64.zip`，运行「配置环境.bat」，再「立即执行.bat」或「每日定时任务.bat」。
 
 **构建发布包**（需 Windows + Python 3.11，仅构建一次）：
 
@@ -65,7 +65,7 @@ python main.py schedule --dry-run          # 查看下次执行时间
 packaging\build_full.bat
 ```
 
-输出 `dist\36Ke-完整版-win64.zip`。无 Windows 构建机时，可用 GitHub Actions 工作流 `.github/workflows/build-windows.yml` 自动构建并下载 Artifact。
+输出 `dist\36Ke-全功能版-win64.zip`（内置 Chromium + Node.js + lark-cli）。解压后使用 **配置环境.bat** → **立即执行.bat** / **每日定时任务.bat**。
 
 详见 [packaging/README.md](packaging/README.md)。
 

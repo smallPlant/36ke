@@ -5,6 +5,7 @@ from typing import Any, Iterable
 
 from kr36.core.models import FinancingCompany
 from kr36.sources.events.pitchhub.financing import format_financing_date
+from kr36.sources.events.qcc.auth import ensure_qcc_login
 from kr36.sources.events.qcc.client import QccClient
 from kr36.sources.events.qcc.constants import (
     DATA_SOURCE_QCC,
@@ -45,6 +46,9 @@ def fetch_qcc_events(
     unknown = [item for item in selected if item not in EVENT_TYPES]
     if unknown:
         raise ValueError(f"未知事件类型: {', '.join(unknown)}")
+
+    if not ensure_qcc_login():
+        raise RuntimeError("企查查登录未完成，无法拉取数据")
 
     http = client or QccClient()
     since_ts = _since_ts(days) if days else None
