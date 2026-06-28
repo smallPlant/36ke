@@ -11,9 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import typer
 
-from kr36.iyiou.browser import IyiouBrowser
-from kr36.iyiou.client import IyiouInvestClient
-from kr36.iyiou.export import save_invest_excel
+from kr36.sources.infra.iyiou.browser import IyiouBrowser
+from kr36.sources.events.iyiou.client import IyiouInvestClient
+from kr36.sources.events.iyiou.export import save_invest_excel
 
 app = typer.Typer(add_completion=False, help="亿欧投资事件拉取")
 

@@ -4,10 +4,10 @@ cd /d "%~dp0"
 set PLAYWRIGHT_BROWSERS_PATH=%~dp0browsers
 title 36Ke - 拉取最近3天融资数据
 
-echo 正在拉取 36氪 + 亿欧 最近 3 天融资数据，请稍候...
+echo 正在拉取 36氪+企查查最近3天 + 亿欧首页，请稍候...
 echo.
 
-36Ke.exe --source all --days 3 --no-push-feishu
+36Ke.exe --no-push-feishu
 
 echo.
 if exist "data" (

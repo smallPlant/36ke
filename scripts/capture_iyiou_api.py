@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import typer
 
-from kr36.iyiou.capture import IyiouCaptureRunner
-from kr36.iyiou.constants import IYIOU_INVEST_LIST_URL
+from kr36.sources.events.iyiou.capture import IyiouCaptureRunner
+from kr36.sources.infra.iyiou.constants import IYIOU_INVEST_LIST_URL
 
 app = typer.Typer(add_completion=False, help="Playwright 自动抓包亿欧 data.iyiou.com 接口")
 
