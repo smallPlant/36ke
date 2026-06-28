@@ -183,7 +183,7 @@ class FinancingRelationPipeline:
                 )
                 merged = self._merge_financing_lists(merged, qcc_list, label="企查查")
             except Exception as exc:
-                print(f"⚠️  企查查拉取失败，已跳过: {exc}")
+                print(f"[WARN] 企查查拉取失败，已跳过: {exc}")
             try:
                 iyiou_list, self._iyiou_details = fetch_iyiou_financing_list(
                     headless=iyiou_headless,
@@ -191,7 +191,7 @@ class FinancingRelationPipeline:
                 )
                 merged = self._merge_financing_lists(merged, iyiou_list, label="亿欧")
             except Exception as exc:
-                print(f"⚠️  亿欧数据源拉取失败，已跳过: {exc}")
+                print(f"[WARN] 亿欧数据源拉取失败，已跳过: {exc}")
             print(f"数据源合并：合计 {len(merged)} 条")
             return merged
 

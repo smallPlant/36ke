@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -12,11 +13,46 @@ from kr36.core.paths import (
     default_qcc_storage_state_path,
 )
 from kr36.sources.infra.iyiou.constants import STEALTH_INIT_SCRIPT, STEALTH_USER_AGENT
-from kr36.sources.events.qcc.constants import EVENT_REFERERS, EVENT_MAINLAND_FINANCING, QCC_ORIGIN
+from kr36.sources.events.qcc.constants import (
+    EVENT_API_PATHS,
+    EVENT_REFERERS,
+    EVENT_MAINLAND_FINANCING,
+    QCC_ORIGIN,
+)
 from kr36.sources.events.qcc.cookie_store import persist_qcc_session
 
 LOGIN_WAIT_URL = EVENT_REFERERS[EVENT_MAINLAND_FINANCING]
 DEFAULT_TIMEOUT_SEC = 300
+
+
+def _probe_request_headers() -> dict[str, str]:
+    return {
+        "User-Agent": STEALTH_USER_AGENT,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Origin": QCC_ORIGIN,
+        "Referer": LOGIN_WAIT_URL,
+    }
+
+
+def _probe_api_with_context(context) -> bool:
+    """在已打开的 Playwright 上下文中探测 API（避免嵌套 sync_playwright）。"""
+    path = EVENT_API_PATHS[EVENT_MAINLAND_FINANCING]
+    url = f"{QCC_ORIGIN}{path}"
+    try:
+        response = context.request.post(
+            url,
+            data=json.dumps({"pageIndex": 1, "pageSize": 1}),
+            headers=_probe_request_headers(),
+            timeout=30_000,
+        )
+        data = json.loads(response.text())
+        if not isinstance(data, dict):
+            return False
+        return data.get("Status") in (200, "200", None)
+    except Exception:
+        return False
 
 
 def load_saved_cookie_header() -> str:
@@ -96,7 +132,7 @@ def _interactive_qcc_login(
             title = page.title()
             if not _is_login_page(url, title):
                 cookie_header = persist_qcc_session(context, storage_path=storage_path)
-                if cookie_header and _api_probe_ok():
+                if cookie_header and _probe_api_with_context(context):
                     logged_in = True
                     break
             page.wait_for_timeout(2000)
@@ -104,7 +140,7 @@ def _interactive_qcc_login(
         if not logged_in:
             cookie_header = persist_qcc_session(context, storage_path=storage_path)
             if cookie_header:
-                logged_in = _api_probe_ok()
+                logged_in = _probe_api_with_context(context)
 
         context.close()
 
